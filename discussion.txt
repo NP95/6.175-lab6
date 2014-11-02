@@ -21,11 +21,11 @@ An instruction is added to the scoreboard during the register read stage. In the
 
 Discussion Question 5 (5 Points): What IPC do you get for each benchmark?
 
-median   : 6871/18789  = 0.366
-multiply : 21098/50190 = 0.420
-qsort    : 21626/58021 = 0.373
-towers   : 9907/24074  = 0.412
-vvadd    : 3018/7254   = 0.416
+median   : 7970  / 18837 = 0.423
+multiply : 22284 / 54372 = 0.410
+qsort    : 24067 / 59855 = 0.402
+towers   : 10511 / 23987 = 0.438
+vvadd    : 3033  / 6670  = 0.455
 
 
 Discussion Question 6 (10 Points): Planning!
@@ -36,26 +36,26 @@ A new FIFO will be added for redirecting BHT data, which requires new epochs. Da
 
 The BTB and BHT will always and only be trained from execute redirects, because that is what contains the true next pc. The execute stage from branch instructions produces the training data. No new FIFO is needed for training the BTB or BHT.
 
-BHT works if assembly and benchmark tests pass and, generally speaking, the IPCs increase.
+BHT works if assembly and benchmark tests pass and, generally speaking, the IPCs increase in addition to a large increase in bht assembly test.
 
 
 Discussion Question 7 (5 Points): How much improvement do you see in the bpred bht.asm.vmh test over the processor in SixStage.bsv?
 
-4320 -> 4028 (6.76% improvement)
+4417 -> 3452 (+21.8% improvement)
 
 
 Discussion Question 8 (5 Points): How much improvement do you see in the bpred j.asm.vmh and
 bpred jal.asm.vmh tests over the processor in SixStage.bsv?
 
-68 -> 49 (27.9% improvement)
+101 -> 49 (51.5% improvement)
 
 
 Discussion Question 9 (5 Points): What IPC do you get for each benchmark? How much improvement
 is this over the original six-stage pipeline?
 
-median   : 6871/18725  = 0.366 (% improvement)
-multiply : 21098/50827 = 0.420 (% improvement)
-qsort    : 21626/57674 = 0.373 (% improvement)
-towers   : 9907/23987  = 0.412 (% improvement)
-vvadd    : 3018/7252   = 0.416 (% improvement)
+median   : 7907  / 18599 = 0.425 (+.473% improvement)
+multiply : 22424 / 54323 = 0.413 (+.732% improvement)
+qsort    : 23662 / 59266 = 0.400 (-.500% improvement)
+towers   : 10345 / 23512 = 0.440 (+.457% improvement)
+vvadd    : 3027  / 6663  = 0.452 (-.659% improvement)
 
