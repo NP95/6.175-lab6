@@ -86,7 +86,8 @@ module mkProc(Proc);
                 // Enqueue data into fetch to execute fifo and update state
                 f2eFifo.enq( f2e );
                 sb.insert( dInst.dst );
-                pc_reg <= ppc;
+                //pc_reg <= ppc;
+                pc_reg <= pc + 4;
                 $display("Fetch: PC = %x, inst = %x, expanded = ", pc, inst, showInst(inst));
             end else begin
                 $display("Fetch Stalled: PC = %x, inst = %x, expanded = ", pc, inst, showInst(inst));

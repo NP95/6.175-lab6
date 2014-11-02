@@ -15,14 +15,14 @@ import Ehr::*;
 typedef struct {
     Addr pc;
     Addr ppc;
-    Bool instEpoch;
+    Bool epoch;
 } Fetch2Decode deriving (Bits, Eq);
 
 typedef struct {
     Addr pc;
     Addr ppc;
     DecodedInst dInst;
-    Bool instEpoch;
+    Bool epoch;
 } Decode2RegRead deriving (Bits, Eq);
 
 typedef struct {
@@ -32,180 +32,188 @@ typedef struct {
     Data rVal1;
     Data rVal2;
     Data copVal;
-    Bool instEpoch;
+    Bool epoch;
 } RegRead2Execute deriving (Bits, Eq);
+
+typedef struct {
+    IType            iType;
+    Maybe#(FullIndx) dst;
+    Data             data;
+    Addr             addr;
+} Exec2Commit deriving(Bits, Eq);
 
 (* synthesize *)
 module mkProc(Proc);
     
-    Reg#(Addr)     pc_reg <- mkReg(0);
+    Reg#(Addr)     pc_reg <- mkRegU;
     Btb#(6,8)      btb    <- mkBtb;
     RFile          rf     <- mkRFile;
-    Scoreboard#(6) sb     <- mkBypassScoreboard;
+    Scoreboard#(3) sb     <- mkPipelineScoreboard;
     FPGAMemory     iMem   <- mkFPGAMemory();
     FPGAMemory     dMem   <- mkFPGAMemory();
     Cop            cop    <- mkCop;
     
-    Reg#(Bool) fetchEpoch   <- mkReg(False);
-    Reg#(Bool) executeEpoch <- mkReg(False);
+    Reg#(Bool) fEpoch <- mkReg(False);
+    Reg#(Bool) eEpoch <- mkReg(False);
     
     Bool memReady = iMem.init.done() && dMem.init.done();
     
-    Fifo#(6, Redirect)        redirectFifo <- mkCFFifo();
-    Fifo#(6, Fetch2Decode)    decodeFifo   <- mkCFFifo();
-    Fifo#(6, Decode2RegRead)  regReadFifo  <- mkCFFifo();
-    Fifo#(6, RegRead2Execute) executeFifo  <- mkCFFifo();
-    Fifo#(6, ExecInst)        eInstFifo1   <- mkCFFifo();
-    Fifo#(6, ExecInst)        eInstFifo2   <- mkCFFifo();
+    Fifo#(1, Redirect)        redirectFifo  <- mkBypassFifo;
+    Fifo#(1, Fetch2Decode)    decodeFifo    <- mkPipelineFifo;
+    Fifo#(1, Decode2RegRead)  regReadFifo   <- mkPipelineFifo;
+    Fifo#(1, RegRead2Execute) executeFifo   <- mkPipelineFifo;
+    Fifo#(1, Exec2Commit)     memoryFifo    <- mkPipelineFifo;
+    Fifo#(1, Exec2Commit)     writeBackFifo <- mkPipelineFifo;
     
-    rule doFetch(cop.started && memReady && decodeFifo.notFull());
-        if(redirectFifo.notEmpty()) begin
+    rule doFetch( cop.started && memReady && decodeFifo.notFull );
+        if( redirectFifo.notEmpty ) begin
             
-            // Correct for misprediction
-            let redirect_msg = redirectFifo.first(); redirectFifo.deq();
-            pc_reg <= redirect_msg.nextPc;
-            fetchEpoch <= !fetchEpoch;
-            $display("Fetch: Mispredict");
+            // Retrieve redirect information
+            let r = redirectFifo.first; redirectFifo.deq;
             
             // Train BTB
-            btb.update(redirect_msg.pc, redirect_msg.nextPc);
+            btb.update( r.pc, r.nextPc );
+            
+            // Correct misprediction
+            pc_reg <= r.nextPc;
+            fEpoch <= !fEpoch;
             
         end else begin
             
             // Fetch Instruction
             let pc  = pc_reg;
             let ppc = btb.predPc(pc);
-            iMem.req(MemReq{ op: Ld, addr: pc, data: ? });
+            iMem.req( MemReq{ op: Ld, addr: pc, data: ? } );
             
             // Update PC
             pc_reg <= ppc;
             
             // Create and push Fetch2Decode
             Fetch2Decode d;
-	    d.pc        = pc;
-	    d.ppc       = ppc;
-            d.instEpoch = fetchEpoch;
+	    d.pc    = pc;
+	    d.ppc   = ppc;
+            d.epoch = fEpoch;
             decodeFifo.enq(d);
 
         end
     endrule
     
-    rule doDecode(cop.started && memReady && decodeFifo.notEmpty() && regReadFifo.notFull());
+    rule doDecode( cop.started && memReady && decodeFifo.notEmpty && regReadFifo.notFull );
         
         // Retrieve Fetch2Decode & Instruction
-        let d = decodeFifo.first(); decodeFifo.deq();
-        let inst <- iMem.resp();
+        let d = decodeFifo.first; decodeFifo.deq;
+        let inst <- iMem.resp;
+        
+        // Decode Instruction
+        let dInst = decode( inst );
         
         // Create and push Decode2RegRead
         Decode2RegRead rr;
-        rr.pc        = d.pc;
-        rr.ppc       = d.ppc;
-        rr.dInst     = decode(inst);
-        rr.instEpoch = d.instEpoch;
+        rr.pc    = d.pc;
+        rr.ppc   = d.ppc;
+        rr.dInst = dInst;
+        rr.epoch = d.epoch;
         regReadFifo.enq(rr);
         
     endrule
     
-    rule doRegRead(cop.started && memReady && regReadFifo.notEmpty());
+    rule doRegRead( cop.started && memReady && regReadFifo.notEmpty && executeFifo.notFull );
         
         // Retrieve Decode2RegRead
-        let rr = regReadFifo.first();
+        let rr = regReadFifo.first;
         
         // Ensure no dependencies
-	if(!sb.search1(rr.dInst.src1) && !sb.search2(rr.dInst.src2)) begin
+	Bool stall = sb.search1( rr.dInst.src1 ) || sb.search2( rr.dInst.src2 );
+        if( !stall ) begin
+            
+            regReadFifo.deq;
             
             // Create and push RegRead2Execute
             RegRead2Execute e;
-            e.pc        = rr.pc;
-            e.ppc       = rr.ppc;
-            e.dInst     = rr.dInst;
-            e.rVal1     = rf.rd1(validRegValue(rr.dInst.src1));
-            e.rVal2     = rf.rd2(validRegValue(rr.dInst.src2));
-            e.copVal    = cop.rd(validRegValue(rr.dInst.src1));
-            e.instEpoch = rr.instEpoch;
+            e.pc     = rr.pc;
+            e.ppc    = rr.ppc;
+            e.dInst  = rr.dInst;
+            e.rVal1  = rf.rd1( validRegValue( rr.dInst.src1 ) );
+            e.rVal2  = rf.rd2( validRegValue( rr.dInst.src2 ) );
+            e.copVal = cop.rd( validRegValue( rr.dInst.src1 ) );
+            e.epoch  = rr.epoch;
             executeFifo.enq(e);
             
             // Update scoreboard
-            sb.insert(rr.dInst.dst);
-            
-            // Consume Decode2RegRead
-            regReadFifo.deq();
+            sb.insert( rr.dInst.dst );
             
 	end
         
     endrule
     
-    rule doExecute(cop.started && memReady && executeFifo.notEmpty());
+    rule doExecute( cop.started && memReady && executeFifo.notEmpty && memoryFifo.notFull );
         
         // Retrieve RegRead2Execute
-        let e = executeFifo.first(); executeFifo.deq();
+        let e = executeFifo.first; executeFifo.deq;
         
-        if(e.instEpoch != executeEpoch) begin
-            
-            // Kill mispredicted instruction
-            sb.remove();
-            $display("Execute: Kill instruction");
-            
+        if(e.epoch != eEpoch) begin
+            memoryFifo.enq( Exec2Commit{ iType: Unsupported, dst: Invalid, data: ?, addr: ? } );
         end else begin
             
             // Execute
-            let eInst = exec(e.dInst, e.rVal1, e.rVal2, e.pc, e.ppc, e.copVal);
-            if(eInst.iType == Unsupported) begin
-                $fwrite(stderr, "Executing unsupported instruction at pc: %x. Exiting\n", e.pc);
+            let eInst = exec( e.dInst, e.rVal1, e.rVal2, e.pc, e.ppc, e.copVal );
+            if( eInst.iType == Unsupported ) begin
+                $fwrite( stderr, "Executing unsupported instruction at pc: %x. Exiting\n", e.pc );
                 $finish;
             end
             
-            // Push eInst
-            eInstFifo1.enq(eInst);
-            
             // Handle misprediction
-            if(eInst.mispredict) begin
-                $display("Execute Mispredict: PC = %x", e.pc);
-                redirectFifo.enq(Redirect{
-                    pc: e.pc,
-                    nextPc: eInst.addr,
-                    brType: eInst.iType,
-                    taken: eInst.brTaken,
-                    mispredict: eInst.mispredict
-                });
-                executeEpoch <= !executeEpoch;
+            if( eInst.mispredict ) begin
+                eEpoch <= !eEpoch;
+                Redirect r;
+                r.pc         = e.pc;
+                r.nextPc     = eInst.addr;
+                r.brType     = eInst.iType;
+                r.taken      = eInst.brTaken;
+                r.mispredict = eInst.mispredict;
+                redirectFifo.enq(r);
             end
             
+            // Push Exec2Commit
+            Exec2Commit c;
+            c.iType = eInst.iType;
+            c.dst   = eInst.dst;
+            c.data  = eInst.data;
+            c.addr  = eInst.addr;
+            memoryFifo.enq(c);
+            
         end
         
     endrule
     
-    rule doMemory(cop.started && memReady && eInstFifo1.notEmpty());
+    rule doMemory( cop.started && memReady && memoryFifo.notEmpty && writeBackFifo.notFull );
         
-        // Retrieve eInst
-        let eInst = eInstFifo1.first(); eInstFifo1.deq();
+        // Retrieve Exec2Commit
+        let c = memoryFifo.first; memoryFifo.deq;
         
         // Memory
-        if(eInst.iType == Ld) begin
-            dMem.req(MemReq{ op: Ld, addr: eInst.addr, data: ? });
-        end else if(eInst.iType == St) begin
-            dMem.req(MemReq{ op: St, addr: eInst.addr, data: eInst.data });
-        end
+        if( c.iType == Ld ) dMem.req( MemReq{ op: Ld, addr: c.addr, data: c.data });
+        if( c.iType == St ) dMem.req( MemReq{ op: St, addr: c.addr, data: c.data });
         
-        // Push eInst
-        eInstFifo2.enq(eInst);
+        // Push Exec2Commit
+        writeBackFifo.enq(c);
     
     endrule
     
-    rule doWriteBack(cop.started && memReady && eInstFifo2.notEmpty());
+    rule doWriteBack( cop.started && memReady && writeBackFifo.notEmpty );
         
-        // Retrieve eInst
-        let eInst = eInstFifo2.first(); eInstFifo2.deq();
+        // Retrieve Exec2Commit
+        let c = writeBackFifo.first; writeBackFifo.deq;
         
-        // Update eInst.data with memory data if applicable
-        if(eInst.iType == Ld) eInst.data <- dMem.resp();
-        
+        // Update c.data with memory data if applicable
+        if( c.iType == Ld ) c.data <- dMem.resp;
+            
         // Write Back
-        if(isValid(eInst.dst) && validValue(eInst.dst).regType == Normal) begin
-            rf.wr(validRegValue(eInst.dst), eInst.data);
+        if( isValid( c.dst ) && validValue( c.dst).regType == Normal ) begin
+            rf.wr( validRegValue( c.dst ), c.data );
         end
-        cop.wr(eInst.dst, eInst.data);
-        sb.remove();
+        cop.wr( c.dst, c.data );
+        sb.remove;
         
     endrule
     
