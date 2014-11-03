@@ -1,6 +1,7 @@
 Discussion Question 1 (10 Points): Debugging practice!
 
-Error: 'Executing unsupported instruction at pc: 000011c0. Exiting'
+'Executing unsupported instruction at pc: 00004000. Exiting'
+
 
 
 

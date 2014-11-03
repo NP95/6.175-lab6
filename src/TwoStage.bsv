@@ -61,7 +61,7 @@ module mkProc(Proc);
             // Fetch
             Addr pc = pc_reg;
             Data inst = iMem.req(pc);
-            Addr ppc = btb.predPc(pc);
+            Addr ppc = pc;//btb.predPc(pc);
             Bool instEpoch = fetchEpoch;
 
             // Decode
@@ -86,8 +86,7 @@ module mkProc(Proc);
                 // Enqueue data into fetch to execute fifo and update state
                 f2eFifo.enq( f2e );
                 sb.insert( dInst.dst );
-                //pc_reg <= ppc;
-                pc_reg <= pc + 4;
+                pc_reg <= ppc;
                 $display("Fetch: PC = %x, inst = %x, expanded = ", pc, inst, showInst(inst));
             end else begin
                 $display("Fetch Stalled: PC = %x, inst = %x, expanded = ", pc, inst, showInst(inst));
@@ -135,6 +134,7 @@ module mkProc(Proc);
             if( eInst.mispredict ) begin
                 // Handle misprediction
                 $display("Execute Mispredict: PC = %x", pc);
+                $fwrite( stderr, "%x -> %x\n", pc, eInst.addr );
                 redirectFifo.enq( Redirect{ pc: pc, nextPc: eInst.addr, brType: eInst.iType, taken: eInst.brTaken, mispredict: eInst.mispredict } );
                 executeEpoch <= ! executeEpoch;
             end else begin
