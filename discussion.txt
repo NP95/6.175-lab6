@@ -21,11 +21,14 @@ An instruction is added to the scoreboard during the register read stage. In the
 
 Discussion Question 5 (5 Points): What IPC do you get for each benchmark?
 
-median   : 7970  / 18837 = 0.423
-multiply : 22284 / 54372 = 0.410
-qsort    : 24067 / 59855 = 0.402
-towers   : 10511 / 23987 = 0.438
-vvadd    : 3033  / 6670  = 0.455
+Benchmark	Insts	Cycles	IPC
+-------------------------------------
+median		8514	16951	0.502
+multiply	22874	47366	0.483
+qsort		25269	54507	0.464
+towers		10643	19371	0.549
+vvadd		3037	5458	0.556
+
 
 
 Discussion Question 6 (10 Points): Planning!
@@ -41,21 +44,30 @@ BHT works if assembly and benchmark tests pass and, generally speaking, the IPCs
 
 Discussion Question 7 (5 Points): How much improvement do you see in the bpred bht.asm.vmh test over the processor in SixStage.bsv?
 
-4417 -> 3452 (+21.8% improvement)
+Big reduction.
+
+5016 -> 3558 (-29.1%)
 
 
 Discussion Question 8 (5 Points): How much improvement do you see in the bpred j.asm.vmh and
 bpred jal.asm.vmh tests over the processor in SixStage.bsv?
 
-101 -> 49 (51.5% improvement)
+Big reduction.
+
+66 -> 50 (-24.24%)
 
 
 Discussion Question 9 (5 Points): What IPC do you get for each benchmark? How much improvement
 is this over the original six-stage pipeline?
 
-median   : 7907  / 18599 = 0.425 (+.473% improvement)
-multiply : 22424 / 54323 = 0.413 (+.732% improvement)
-qsort    : 23662 / 59266 = 0.400 (-.500% improvement)
-towers   : 10345 / 23512 = 0.440 (+.457% improvement)
-vvadd    : 3027  / 6663  = 0.452 (-.659% improvement)
+I'm surprised that most of the benchmarks performed worse. However, it may be due to the reduced instruction counts...
+
+Benchmark	Insts	Cycles	IPC	Improvement
+---------------------------------------------------
+median		8247	16959	0.486	-3.18%
+multiply	23086	47729	0.484	+0.16%
+qsort		24634	53545	0.460	-0.76%
+towers		10541	19584	0.538	-2.04%
+vvadd		3029	5455	0.555	-0.21%
+
 

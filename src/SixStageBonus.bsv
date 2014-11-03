@@ -16,20 +16,9 @@ import Ehr::*;
 typedef struct {
     Addr pc;
     Addr nextPc;
+    IType iType;
     Bool taken;
-    Bool mispredict;
-} ExecuteRedirect deriving (Bits, Eq);
-
-typedef struct {
-    Addr nextPc;
-    Bool rEp;
-    Bool eEp;
-} DecodeRedirect deriving (Bits, Eq);
-
-typedev struct {
-    Addr nextPc;
-    Bool eEp;
-} RegReadRedirect deriving (Bits, Eq);
+} TrainRedirect deriving (Bits, Eq);
 
 typedef struct {
     Addr pc;
@@ -67,98 +56,46 @@ typedef struct {
 (* synthesize *)
 module mkProc(Proc);
     
-    Reg#(Addr)     pc_reg <- mkRegU;
+    Ehr#(4, Addr)  pc_reg <- mkEhr(0);
     Btb#(6,8)      btb    <- mkBtb;
     Bht#(8)        bht    <- mkBht;
     RFile          rf     <- mkRFile;
-    Scoreboard#(3) sb     <- mkPipelineScoreboard;
+    Scoreboard#(3) sb     <- mkBypassScoreboard;
     FPGAMemory     iMem   <- mkFPGAMemory();
     FPGAMemory     dMem   <- mkFPGAMemory();
     Cop            cop    <- mkCop;
     
-    Reg#(Bool) fdEp <- mkReg(False);
-    Reg#(Bool) frEp <- mkReg(False);
-    Reg#(Bool) feEp <- mkReg(False);
+    Ehr#(4, Bool) dEp <- mkEhr(False);
+    Ehr#(4, Bool) rEp <- mkEhr(False);
+    Ehr#(4, Bool) eEp <- mkEhr(False);
     
-    Reg#(Bool) dEp  <- mkReg(False);
-    Reg#(Bool) drEp <- mkReg(False);
-    Reg#(Bool) deEp <- mkReg(False);
-    
-    Reg#(Bool) rEp  <- mkReg(False);
-    Reg#(Bool) reEp <- mkReg(False);
-    
-    Reg#(Bool) eEp  <- mkReg(False);
-    
-    Fifo#(1, DecodeRedirect)  dRedirectFifo <- mkBypassFifo;
-    Fifo#(1, RegReadRedirect) rRedirectFifo <- mkBypassFifo;
-    Fifo#(1, ExecuteRedirect) eRedirectFifo <- mkBypassFifo;
-    
-    Fifo#(1, Fetch2Decode)    decodeFifo    <- mkPipelineFifo;
-    Fifo#(1, Decode2RegRead)  regReadFifo   <- mkPipelineFifo;
-    Fifo#(1, RegRead2Execute) executeFifo   <- mkPipelineFifo;
-    Fifo#(1, Exec2Commit)     memoryFifo    <- mkPipelineFifo;
-    Fifo#(1, Exec2Commit)     writeBackFifo <- mkPipelineFifo;
+    Fifo#(2, Fetch2Decode)    decodeFifo    <- mkCFFifo;
+    Fifo#(2, Decode2RegRead)  regReadFifo   <- mkCFFifo;
+    Fifo#(2, RegRead2Execute) executeFifo   <- mkCFFifo;
+    Fifo#(2, Exec2Commit)     memoryFifo    <- mkCFFifo;
+    Fifo#(2, Exec2Commit)     writeBackFifo <- mkCFFifo;
     
     Bool memReady = iMem.init.done() && dMem.init.done();
     
     rule doFetch( cop.started && memReady && decodeFifo.notFull );
-        if( eRedirectFifo.notEmpty ) begin
-            
-            // Retrieve redirect information
-            let r = eRedirectFifo.first; eRedirectFifo.deq;
-            
-            // Train BTB & BHT
-            btb.update( r.pc, r.nextPc );
-            bht.train( r.pc, r.taken );
-            
-            // Correct misprediction
-            if( r.mispredict ) begin
-                pc_reg <= r.nextPc;
-                feEp   <= !feEp;
-            end
-            
-        end else if( rRedirectFifo.notEmpty ) begin
-            
-            // Retrieve redirect information
-            let r = rRedirectFifo.first; rRedirectFifo.deq;
-            
-            // Correct misprediction
-            if ( r.eEp == feEp ) begin
-                pc_reg <= r.nextPc;
-                frEp   <= !frEp;
-            end
-            
-        end else if( dRedirectFifo.notEmpty ) begin
-            
-            // Retrieve redirect information
-            let r = dRedirectFifo.first; dRedirectFifo.deq;
-            
-            // Correct misprediction
-            if( r.eEp == feEp && r.rEp == frEp ) begin
-                pc_reg <= r.nextPc;
-                fdEp   <= !fdEp;
-            end
-            
-        end else begin
-            
-            // Fetch Instruction
-            let pc  = pc_reg;
-            let ppc = btb.predPc(pc);
-            iMem.req( MemReq{ op: Ld, addr: pc, data: ? } );
-            
-            // Update PC
-            pc_reg <= ppc;
-            
-            // Create and push Fetch2Decode
-            Fetch2Decode d;
-	    d.pc  = pc;
-	    d.ppc = ppc;
-            d.dEp = fdEp;
-            d.rEp = frEp;
-            d.eEp = feEp;
-            decodeFifo.enq(d);
+        
+        // Fetch Instruction
+        let pc  = pc_reg[3];
+        let ppc = btb.predPc(pc);
+        iMem.req( MemReq{ op: Ld, addr: pc, data: ? } );
+        
+        // Update PC
+        pc_reg[3] <= ppc;
+        
+        // Create and push Fetch2Decode
+        Fetch2Decode d;
+	d.pc  = pc;
+	d.ppc = ppc;
+        d.dEp = dEp[3];
+        d.rEp = rEp[3];
+        d.eEp = eEp[3];
+        decodeFifo.enq(d);
 
-        end
     endrule
     
     rule doDecode( cop.started && memReady && decodeFifo.notEmpty && regReadFifo.notFull );
@@ -167,20 +104,17 @@ module mkProc(Proc);
         let d = decodeFifo.first; decodeFifo.deq;
         let inst <- iMem.resp;
         
-        // Decode Instruction
-        let dInst = decode(inst);
-        
-        // Predict Branch
-        let nextPc  = d.pc + 4;
-        let taken   = bht.predict(d.pc);
-        if( dInst.iType == J ) nextPc[27:0] = validValue(dInst.imm)[27:0];
-        else if( dInst.iType == Jr ) begin if( taken ) nextPc = d.ppc; end
-        else if( dInst.iType == Br ) begin if( taken ) nextPc = nextPc + validValue(dInst.imm); end
-        else nextPc = d.ppc;
-        
-        if( d.eEp != deEp ) begin
+        if( d.eEp == eEp[2] && d.rEp == rEp[2] && d.dEp == dEp[2] ) begin
             
-            deEp <= d.eEp; let next_dEp = d.dEp;
+            // Decode Instruction
+            let dInst = decode(inst);
+            
+            // Predict Branch
+            let nextPc  = d.pc + 4;
+            let taken   = bht.predict(d.pc);
+            if( dInst.iType == J ) nextPc[27:0] = validValue(dInst.imm)[27:0];
+            else if( dInst.iType == Br ) begin if( taken ) nextPc = nextPc + validValue(dInst.imm); end
+            else nextPc = d.ppc;
             
             // Create and push Decode2RegRead
             Decode2RegRead rr;
@@ -193,35 +127,8 @@ module mkProc(Proc);
             
             // Handle misprediction
             if( d.ppc != nextPc ) begin
-                next_dEp = !next_dEp;
-                DecodeRedirect dr;
-                dr.nextPc = nextPc;
-                dr.rEp    = d.rEp;
-                dr.eEp    = d.eEp;
-                dRedirectFifo.enq(dr);
-            end
-            
-            dEp <= next_dEp;
-        
-        end else if( d.dEp == dEp ) begin
-            
-            // Create and push Decode2RegRead
-            Decode2RegRead rr;
-            rr.pc    = d.pc;
-            rr.ppc   = nextPc;
-            rr.dInst = dInst;
-            rr.rEp   = d.rEp;
-            rr.eEp   = d.eEp;
-            regReadFifo.enq(rr);
-
-            // Handle misprediction
-            if( d.ppc != nextPc ) begin
-                dEp <= !dEp;
-                DecodeRedirect dr;
-                dr.nextPc = nextPc;
-                dr.rEp    = d.rEp;
-                dr.eEp    = d.eEp;
-                dRedirectFifo.enq(dr);
+                pc_reg[2] <= nextPc;
+                dEp[2]    <= !dEp[2];
             end
             
         end
@@ -233,35 +140,38 @@ module mkProc(Proc);
         // Retrieve Decode2RegRead
         let rr = regReadFifo.first;
         
-        if( rr.eEp != reEp ) begin
+        if( rr.eEp != eEp[1] || rr.rEp != rEp[1] ) regReadFifo.deq;
+        else begin
             
-            reEp <= rr.eEp; let next_rEp
-            
-            
+            // Ensure no dependencies
+            Bool stall = sb.search1( rr.dInst.src1 ) || sb.search2( rr.dInst.src2 );
+	    if( !stall ) begin
+                
+                regReadFifo.deq;
+                
+                // Create and push RegRead2Execute
+                RegRead2Execute e;
+                e.pc     = rr.pc;
+                e.dInst  = rr.dInst;
+                e.rVal1  = rf.rd1( validRegValue( rr.dInst.src1 ) );
+                e.rVal2  = rf.rd2( validRegValue( rr.dInst.src2 ) );
+                e.copVal = cop.rd( validRegValue( rr.dInst.src1 ) );
+                e.ppc    = rr.dInst.iType == Jr ? e.rVal1 : rr.ppc;
+                e.eEp    = rr.eEp;
+                executeFifo.enq(e);
+                
+                // Update scoreboard
+                sb.insert( rr.dInst.dst );
+                
+                // Handle misprediction
+                if( rr.ppc != e.ppc ) begin
+                    pc_reg[1] <= e.ppc;
+                    rEp[1]    <= !rEp[1];
+                end
+                
+	    end
             
         end
-        
-        // Ensure no dependencies
-        Bool stall = sb.search1( rr.dInst.src1 ) || sb.search2( rr.dInst.src2 );
-	if( !stall ) begin
-            
-            regReadFifo.deq;
-            
-            // Create and push RegRead2Execute
-            RegRead2Execute e;
-            e.pc     = rr.pc;
-            e.ppc    = rr.ppc;
-            e.dInst  = rr.dInst;
-            e.rVal1  = rf.rd1( validRegValue( rr.dInst.src1 ) );
-            e.rVal2  = rf.rd2( validRegValue( rr.dInst.src2 ) );
-            e.copVal = cop.rd( validRegValue( rr.dInst.src1 ) );
-            e.eEp    = rr.eEp;
-            executeFifo.enq(e);
-            
-            // Update scoreboard
-            sb.insert( rr.dInst.dst );
-            
-	end
         
     endrule
     
@@ -270,7 +180,7 @@ module mkProc(Proc);
         // Retrieve RegRead2Execute
         let e = executeFifo.first; executeFifo.deq;
         
-        if( e.eEp != eEp ) begin
+        if( e.eEp != eEp[0] ) begin
             memoryFifo.enq( Exec2Commit{ iType: Unsupported, dst: Invalid, data: ?, addr: ? } );
         end else begin
             
@@ -282,17 +192,16 @@ module mkProc(Proc);
             end
             
             // Handle misprediction
-            if( eInst.mispredict ) eEp <= !eEp;
-            
-            // Handle branch
-            if( eInst.iType == J  || eInst.iType == Jr || eInst.iType == Br ) begin
-                ExecuteRedirect eR;
-                eR.pc         = e.pc;
-                eR.nextPc     = eInst.addr;
-                eR.taken      = eInst.brTaken;
-                eR.mispredict = eInst.mispredict;
-                eRedirectFifo.enq(eR);
+            if( eInst.mispredict ) begin
+                pc_reg[0] <= eInst.addr;
+                eEp[0]    <= !eEp[0];
             end
+            
+            // Train BTB & BHT
+            if( eInst.iType == J  || eInst.iType == Jr || eInst.iType == Br ) begin
+                btb.update( e.pc, eInst.addr );
+            end
+            if( eInst.iType == Br ) bht.train( e.pc, eInst.brTaken );
             
             // Push Exec2Commit
             Exec2Commit c;
@@ -344,7 +253,7 @@ module mkProc(Proc);
     
     method Action hostToCpu(Bit#(32) startpc) if ( !cop.started && memReady );
         cop.start;
-        pc_reg <= startpc;
+        pc_reg[3] <= startpc;
     endmethod
     
     interface MemInit iMemInit = iMem.init;

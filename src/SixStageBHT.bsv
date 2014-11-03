@@ -16,6 +16,7 @@ import Ehr::*;
 typedef struct {
     Addr pc;
     Addr nextPc;
+    IType iType;
     Bool taken;
     Bool mispredict;
 } ExecuteRedirect deriving (Bits, Eq);
@@ -63,7 +64,7 @@ module mkProc(Proc);
     Btb#(6,8)      btb    <- mkBtb;
     Bht#(8)        bht    <- mkBht;
     RFile          rf     <- mkRFile;
-    Scoreboard#(3) sb     <- mkPipelineScoreboard;
+    Scoreboard#(3) sb     <- mkBypassScoreboard;
     FPGAMemory     iMem   <- mkFPGAMemory();
     FPGAMemory     dMem   <- mkFPGAMemory();
     Cop            cop    <- mkCop;
@@ -74,14 +75,14 @@ module mkProc(Proc);
     Reg#(Bool) deEp <- mkReg(False);
     Reg#(Bool) eEp  <- mkReg(False);
     
-    Fifo#(1, DecodeRedirect)  dRedirectFifo <- mkBypassFifo;
-    Fifo#(1, ExecuteRedirect) eRedirectFifo <- mkBypassFifo;
+    Fifo#(2, DecodeRedirect)  dRedirectFifo <- mkCFFifo;
+    Fifo#(2, ExecuteRedirect) eRedirectFifo <- mkCFFifo;
     
-    Fifo#(1, Fetch2Decode)    decodeFifo    <- mkPipelineFifo;
-    Fifo#(1, Decode2RegRead)  regReadFifo   <- mkPipelineFifo;
-    Fifo#(1, RegRead2Execute) executeFifo   <- mkPipelineFifo;
-    Fifo#(1, Exec2Commit)     memoryFifo    <- mkPipelineFifo;
-    Fifo#(1, Exec2Commit)     writeBackFifo <- mkPipelineFifo;
+    Fifo#(2, Fetch2Decode)    decodeFifo    <- mkCFFifo;
+    Fifo#(2, Decode2RegRead)  regReadFifo   <- mkCFFifo;
+    Fifo#(2, RegRead2Execute) executeFifo   <- mkCFFifo;
+    Fifo#(2, Exec2Commit)     memoryFifo    <- mkCFFifo;
+    Fifo#(2, Exec2Commit)     writeBackFifo <- mkCFFifo;
     
     Bool memReady = iMem.init.done() && dMem.init.done();
     
@@ -93,7 +94,7 @@ module mkProc(Proc);
             
             // Train BTB & BHT
             btb.update( r.pc, r.nextPc );
-            bht.train( r.pc, r.taken );
+            if( r.iType != J ) bht.train( r.pc, r.taken );
             
             // Correct misprediction
             if( r.mispredict ) begin
@@ -249,6 +250,7 @@ module mkProc(Proc);
                 ExecuteRedirect eR;
                 eR.pc         = e.pc;
                 eR.nextPc     = eInst.addr;
+                eR.iType      = eInst.iType;
                 eR.taken      = eInst.brTaken;
                 eR.mispredict = eInst.mispredict;
                 eRedirectFifo.enq(eR);

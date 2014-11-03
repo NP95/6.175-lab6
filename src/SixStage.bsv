@@ -48,7 +48,7 @@ module mkProc(Proc);
     Reg#(Addr)     pc_reg <- mkRegU;
     Btb#(6,8)      btb    <- mkBtb;
     RFile          rf     <- mkRFile;
-    Scoreboard#(3) sb     <- mkPipelineScoreboard;
+    Scoreboard#(3) sb     <- mkBypassScoreboard;
     FPGAMemory     iMem   <- mkFPGAMemory();
     FPGAMemory     dMem   <- mkFPGAMemory();
     Cop            cop    <- mkCop;
@@ -58,12 +58,12 @@ module mkProc(Proc);
     
     Bool memReady = iMem.init.done() && dMem.init.done();
     
-    Fifo#(1, Redirect)        redirectFifo  <- mkBypassFifo;
-    Fifo#(1, Fetch2Decode)    decodeFifo    <- mkPipelineFifo;
-    Fifo#(1, Decode2RegRead)  regReadFifo   <- mkPipelineFifo;
-    Fifo#(1, RegRead2Execute) executeFifo   <- mkPipelineFifo;
-    Fifo#(1, Exec2Commit)     memoryFifo    <- mkPipelineFifo;
-    Fifo#(1, Exec2Commit)     writeBackFifo <- mkPipelineFifo;
+    Fifo#(2, Redirect)        redirectFifo  <- mkBypassFifo;
+    Fifo#(2, Fetch2Decode)    decodeFifo    <- mkCFFifo;
+    Fifo#(2, Decode2RegRead)  regReadFifo   <- mkCFFifo;
+    Fifo#(2, RegRead2Execute) executeFifo   <- mkCFFifo;
+    Fifo#(2, Exec2Commit)     memoryFifo    <- mkCFFifo;
+    Fifo#(2, Exec2Commit)     writeBackFifo <- mkCFFifo;
     
     rule doFetch( cop.started && memReady && decodeFifo.notFull );
         if( redirectFifo.notEmpty ) begin
