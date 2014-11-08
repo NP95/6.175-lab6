@@ -1,0 +1,11 @@
+Username: akashk16
+Grade: 96%
+Comments:
+Discussion question 1) Missing answers to some of the questions
+Discussion question 2) Your pipeline stages are not all firing in the same cycle 
+because your scoreboard is not large enough to have an instruction executing in 
+RegisterFetch, Execute, Memory, and Write Back all at the same time. Try 
+increasing the size of your scoreboard so you get about 102 cycles for the 
+baseline assembly test.
+Bonus: It looks like you redirect JR properly, but you introduced some new
+conflicts between rules.
